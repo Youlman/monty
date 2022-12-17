@@ -1,6 +1,12 @@
 #include "monty.h"
 #include <string.h>
 
+void free_tokens(void);
+unsigned int token_arr_len(void);
+int is_empty_line(char *line, char *delims);
+void (*get_op_func(char *opcode))(stack_t**, unsigned int);
+int run_monty(FILE *script_fd);
+
 /**
  * free_tokens - Frees the global op_toks array of strings.
  */
@@ -11,46 +17,50 @@ void free_tokens(void)
 	if (op_toks == NULL)
 		return;
 
-	while (op_toks[i])
-	{
-		if (op_toks[i])
-			free(op_toks[i]);
-		i++;
-	}
+	for (i = 0; op_toks[i]; i++)
+		free(op_toks[i]);
+
 	free(op_toks);
 }
 
 /**
- * free_stack - Frees a stack_t stack.
- * @stack: A pointer to the top (stack) or
- *         bottom (queue) of a stack_t.
+ * token_arr_len - Gets the length of current op_toks.
+ *
+ * Return: Length of current op_toks (as int).
  */
-void free_stack(stack_t **stack)
+unsigned int token_arr_len(void)
 {
-	stack_t *tmp = NULL, *iter = NULL;
+	unsigned int toks_len = 0;
 
-	if (stack && *stack)
+	while (op_toks[toks_len])
+		toks_len++;
+	return (toks_len);
+}
+
+/**
+ * is_empty_line - Checks if a line read from getline only contains delimiters.
+ * @line: A pointer to the line.
+ * @delims: A string of delimiter characters.
+ *
+ * Return: If the line only contains delimiters - 1.
+ *         Otherwise - 0.
+ */
+int is_empty_line(char *line, char *delims)
+{
+	int i, j;
+
+	for (i = 0; line[i]; i++)
 	{
-		tmp = *stack;
-		if ((*stack)->next == NULL) /* queue */
+		for (j = 0; delims[j]; j++)
 		{
-			while (tmp)
-			{
-				iter = tmp->prev;
-				free(tmp);
-				tmp = iter;
-			}
+			if (line[i] == delims[j])
+				break;
 		}
-		else /* normal stack */
-		{
-			while (tmp)
-			{
-				iter = tmp->next;
-				free(tmp);
-				tmp = iter;
-			}
-		}
+		if (delims[j] == '\0')
+			return (0);
 	}
+
+	return (1);
 }
 
 /**
@@ -62,8 +72,6 @@ void free_stack(stack_t **stack)
 void (*get_op_func(char *opcode))(stack_t**, unsigned int)
 {
 	instruction_t op_funcs[] = {
-		{"stack", monty_stack},
-		{"queue", monty_queue},
 		{"push", monty_push},
 		{"pall", monty_pall},
 		{NULL, NULL}
@@ -80,41 +88,57 @@ void (*get_op_func(char *opcode))(stack_t**, unsigned int)
 }
 
 /**
- * run_monty - primary function to execute a monty script currently open
- * @script_fd: file descriptor for script that is open,
- *             to be read and processed
+ * run_monty - Primary function to execute a Monty bytecodes script.
+ * @script_fd: File descriptor for an open Monty bytecodes script.
  *
- * Return: (EXIT_SUCCESS) on success, respective error code on failure
+ * Return: EXIT_SUCCESS on success, respective error code on failure.
  */
 int run_monty(FILE *script_fd)
 {
 	stack_t *stack = NULL;
 	char *line = NULL;
-	size_t len = 0;
-	unsigned int line_number = 1;
+	size_t len = 0, exit_status = EXIT_SUCCESS;
+	unsigned int line_number = 0, prev_tok_len = 0;
 	void (*op_func)(stack_t**, unsigned int);
+
+	if (init_stack(&stack) == EXIT_FAILURE)
+		return (EXIT_FAILURE);
 
 	while (getline(&line, &len, script_fd) != -1)
 	{
-		op_toks = strtow(line, " \n\t\a\b");
+		line_number++;
+		op_toks = strtow(line, DELIMS);
 		if (op_toks == NULL)
 		{
-			free(line);
+			if (is_empty_line(line, DELIMS))
+				continue;
 			free_stack(&stack);
 			return (malloc_error());
 		}
-
+		else if (op_toks[0][0] == '#') /* comment line */
+		{
+			free_tokens();
+			continue;
+		}
 		op_func = get_op_func(op_toks[0]);
 		if (op_func == NULL)
 		{
-			free(line);
-			free_tokens();
 			free_stack(&stack);
-			return (unknown_op_error(op_toks[0], line_number));
+			exit_status = unknown_op_error(op_toks[0], line_number);
+			free_tokens();
+			break;
 		}
-
+		prev_tok_len = token_arr_len();
 		op_func(&stack, line_number);
-		line_number++;
+		if (token_arr_len() != prev_tok_len)
+		{
+			if (op_toks && op_toks[prev_tok_len])
+				exit_status = atoi(op_toks[prev_tok_len]);
+			else
+				exit_status = EXIT_FAILURE;
+			free_tokens();
+			break;
+		}
 		free_tokens();
 	}
 	free_stack(&stack);
@@ -126,5 +150,5 @@ int run_monty(FILE *script_fd)
 	}
 
 	free(line);
-	return (EXIT_SUCCESS);
+	return (exit_status);
 }
